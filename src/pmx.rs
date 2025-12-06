@@ -128,7 +128,7 @@ impl Header {
 
         r.read_exact(&mut tag)?;
 
-        if &tag[..3] != b"Pmd" {
+        if &tag[..3] != b"PMX" {
             Err(Error::InvalidTag)?
         }
 
