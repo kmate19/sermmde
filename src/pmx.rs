@@ -12,7 +12,7 @@ pub enum Error {
     InvalidTag,
     #[error("Unknown encoding")]
     InvalidEncoding,
-    #[error("IO error: {}", self)]
+    #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
     #[error("Failed to parse text as utf16")]
     Utf16Error,
@@ -63,7 +63,13 @@ impl PmdText {
 
         reader.read_exact(&mut len)?;
 
+        // this is an i32 for some reason as per "spec"
         let len = i32::from_le_bytes(len);
+
+        if len.is_negative() {
+            // TODO(mate): make better error types
+            Err(Error::InvalidEncoding)?
+        }
 
         let mut raw_bytes = vec![0; len as _];
 
@@ -86,6 +92,7 @@ fn from_utf16le(v: &[u8]) -> Result<String> {
         v.align_to::<u16>()
     }) {
         (true, ([], v, [])) => String::from_utf16(v).map_err(|_| Error::Utf16Error)?,
+        // TODO(mate): don't discard error info here
         _ => char::decode_utf16(chunks.iter().copied().map(u16::from_le_bytes))
             .map(|u| u.map_err(|_| Error::Utf16Error))
             .collect::<Result<_>>()?,
@@ -116,11 +123,12 @@ pub struct Comment {
 
 impl Header {
     pub fn parse(r: &mut impl Read) -> Result<Self> {
+        // 4 bytes since there's a space after
         let mut tag = [0; 4];
 
         r.read_exact(&mut tag)?;
 
-        if tag[0] != b'P' && tag[1] != b'm' && tag[2] != b'd' {
+        if &tag[..3] != b"Pmd" {
             Err(Error::InvalidTag)?
         }
 
@@ -187,6 +195,8 @@ pub struct Globals {
     bone_idx_size: u8,
     morph_idx_size: u8,
     rb_idx_size: u8,
+    /// Store additional fields here that we don't know the specific purpose of right now.
+    additional: Option<Vec<u8>>,
 }
 
 impl Globals {
@@ -195,9 +205,20 @@ impl Globals {
 
         r.read_exact(&mut global_count)?;
 
-        let mut globals = vec![0; global_count[0].into()];
+        if global_count[0] < 8 {
+            // TODO(mate): make better error types
+            Err(Error::InvalidEncoding)?
+        }
+
+        let mut globals = vec![0; global_count[0] as _];
 
         r.read_exact(&mut globals)?;
+
+        let additional = if global_count[0] > 8 {
+            Some(globals.split_off(8))
+        } else {
+            None
+        };
 
         Ok(Self {
             encoding: globals[0].try_into()?,
@@ -208,6 +229,7 @@ impl Globals {
             bone_idx_size: globals[5],
             morph_idx_size: globals[6],
             rb_idx_size: globals[7],
+            additional,
         })
     }
 }
