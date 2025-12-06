@@ -23,11 +23,11 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-pub struct Pmd {
+pub struct Pmx {
     header: Header,
 }
 
-impl Pmd {
+impl Pmx {
     pub fn open(path: &Path) -> Result<Self> {
         let fh = std::fs::File::open(path)?;
 
@@ -35,7 +35,7 @@ impl Pmd {
 
         let header = Header::parse(&mut reader)?;
 
-        Ok(Pmd { header })
+        Ok(Pmx { header })
     }
 }
 

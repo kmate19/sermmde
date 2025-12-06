@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use sermmde::pmd::Pmd;
+use sermmde::pmx::Pmx;
 
 fn main() {
     let args = std::env::args().collect::<Vec<String>>();
 
     let path = PathBuf::from(args[1].clone());
 
-    let pmd = Pmd::open(&path).unwrap();
+    let pmd = Pmx::open(&path).unwrap();
     dbg!(pmd);
 }
