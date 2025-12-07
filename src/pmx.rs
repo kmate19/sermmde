@@ -7,22 +7,23 @@ use std::{
 
 use thiserror::Error;
 
-use crate::vertex;
+use crate::{
+    types::{self, PmxText, TextEncoding},
+    vertex,
+};
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("File had an invalid tag")]
+    #[error("File had an invalid tag, did you input the correct file?")]
     InvalidTag,
-    #[error("Unknown encoding")]
-    InvalidEncoding,
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
-    #[error("Failed to parse text as utf16")]
-    Utf16Error,
-    #[error("Failed to decode utf16 char")]
-    DecodeUtf16(#[from] std::char::DecodeUtf16Error),
-    #[error("Error parsing vertex {0}")]
+    #[error("Error parsing vertex: {0}")]
     VertexError(#[from] vertex::Error),
+    #[error("PMX type error: {0}")]
+    TypeError(#[from] types::Error),
+    #[error("Invalid global variable amount, must be at least 8")]
+    InvalidGlobalCount,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -39,7 +40,7 @@ impl fmt::Debug for Pmx {
             .field(
                 "vertices",
                 &format!(
-                    "<truncated, print the field separately if you want to see> (size: {})",
+                    "<truncated, print the field separately if you want to see raw contents> (size: {})",
                     self.vertices.len()
                 ),
             )
@@ -65,68 +66,6 @@ impl Pmx {
     }
 }
 
-pub struct PmdText {
-    len: i32,
-    raw_bytes: Vec<u8>,
-}
-
-impl fmt::Debug for PmdText {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let string = self
-            .try_into_string()
-            .unwrap_or("<Unable to parse string>".into());
-
-        f.debug_struct("PmdText")
-            .field("len", &self.len)
-            .field("contents", &string)
-            .finish()
-    }
-}
-
-impl PmdText {
-    pub fn from_bytes(reader: &mut impl Read) -> Result<Self> {
-        let mut len = [0; 4];
-
-        reader.read_exact(&mut len)?;
-
-        // this is an i32 for some reason as per "spec"
-        let len = i32::from_le_bytes(len);
-
-        if len.is_negative() {
-            // TODO(mate): make better error types
-            Err(Error::InvalidEncoding)?
-        }
-
-        let mut raw_bytes = vec![0; len as _];
-
-        reader.read_exact(&mut raw_bytes)?;
-
-        Ok(Self { len, raw_bytes })
-    }
-
-    pub fn try_into_string(&self) -> Result<String> {
-        from_utf16le(&self.raw_bytes)
-    }
-}
-
-fn from_utf16le(v: &[u8]) -> Result<String> {
-    let (chunks, []) = v.as_chunks::<2>() else {
-        return Err(Error::Utf16Error);
-    };
-
-    let res = match (cfg!(target_endian = "little"), unsafe {
-        v.align_to::<u16>()
-    }) {
-        (true, ([], v, [])) => String::from_utf16(v).map_err(|_| Error::Utf16Error)?,
-        // TODO(mate): don't discard error info here
-        _ => char::decode_utf16(chunks.iter().copied().map(u16::from_le_bytes))
-            .map(|u| u.map_err(|_| Error::Utf16Error))
-            .collect::<Result<_>>()?,
-    };
-
-    Ok(res)
-}
-
 #[derive(Debug)]
 pub struct Header {
     version: f32,
@@ -137,14 +76,14 @@ pub struct Header {
 
 #[derive(Debug)]
 pub struct ModelName {
-    pub local: PmdText,
-    pub universal: PmdText,
+    pub local: PmxText,
+    pub universal: PmxText,
 }
 
 #[derive(Debug)]
 pub struct Comment {
-    pub local: PmdText,
-    pub universal: PmdText,
+    pub local: PmxText,
+    pub universal: PmxText,
 }
 
 impl Header {
@@ -166,18 +105,20 @@ impl Header {
 
         let globals = Globals::parse(r)?;
 
-        let local_name = PmdText::from_bytes(r)?;
+        let text_encoding = globals.encoding;
 
-        let universal_name = PmdText::from_bytes(r)?;
+        let local_name = PmxText::from_bytes(r, text_encoding)?;
+
+        let universal_name = PmxText::from_bytes(r, text_encoding)?;
 
         let name = ModelName {
             local: local_name,
             universal: universal_name,
         };
 
-        let local_comment = PmdText::from_bytes(r)?;
+        let local_comment = PmxText::from_bytes(r, text_encoding)?;
 
-        let universal_comment = PmdText::from_bytes(r)?;
+        let universal_comment = PmxText::from_bytes(r, text_encoding)?;
 
         let comment = Comment {
             local: local_comment,
@@ -194,26 +135,8 @@ impl Header {
 }
 
 #[derive(Debug)]
-pub enum Encoding {
-    UTF16LE,
-    UTF8,
-}
-
-impl TryFrom<u8> for Encoding {
-    type Error = Error;
-
-    fn try_from(value: u8) -> Result<Encoding> {
-        match value {
-            0 => Ok(Encoding::UTF16LE),
-            1 => Ok(Encoding::UTF8),
-            _ => Err(Error::InvalidEncoding),
-        }
-    }
-}
-
-#[derive(Debug)]
 pub struct Globals {
-    encoding: Encoding,
+    encoding: TextEncoding,
     vec4_additional: u8,
     vert_idx_size: u8,
     tex_idx_size: u8,
@@ -232,11 +155,11 @@ impl Globals {
         r.read_exact(&mut global_count)?;
 
         if global_count[0] < 8 {
-            // TODO(mate): make better error types
-            Err(Error::InvalidEncoding)?
+            Err(Error::InvalidGlobalCount)?
         }
 
-        let mut globals = vec![0; global_count[0] as _];
+        // note that global count is actually an i8, but since we already checked it's >= 8 we can assume its not negative.
+        let mut globals = vec![0; global_count[0] as usize];
 
         r.read_exact(&mut globals)?;
 

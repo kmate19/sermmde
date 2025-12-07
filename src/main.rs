@@ -7,6 +7,7 @@ fn main() {
 
     let path = PathBuf::from(args[1].clone());
 
-    let pmd = Pmx::open(&path).unwrap();
-    dbg!(pmd);
+    let pmx = Pmx::open(&path).unwrap();
+
+    dbg!(pmx);
 }

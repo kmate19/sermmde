@@ -5,3 +5,8 @@ edition = "2024"
 
 [dependencies]
 thiserror = "2.0.17"
+glam = { version = "0.30.9", optional = true }
+
+[features]
+default = ["math_glam"]
+math_glam = ["glam"]

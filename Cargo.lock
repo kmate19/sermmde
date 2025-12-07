@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "glam"
+version = "0.30.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd47b05dddf0005d850e5644cae7f2b14ac3df487979dbfff3b56f20b1a6ae46"
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -24,6 +30,7 @@ dependencies = [
 name = "sermmde"
 version = "0.0.1"
 dependencies = [
+ "glam",
  "thiserror",
 ]
 

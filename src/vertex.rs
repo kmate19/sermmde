@@ -2,11 +2,21 @@ use std::{io::Read, vec};
 
 use thiserror::Error;
 
-use crate::pmx::{Error as PmxError, Result};
+use crate::types::{Vec2, Vec3, Vec4};
 
-pub type Vec2 = [f32; 2];
-pub type Vec3 = [f32; 3];
-pub type Vec4 = [f32; 4];
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("The index size mismatched")]
+    IndexSizeMismatch,
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Negative size encountered where positive expected")]
+    NegativeSize,
+    #[error("Invalid weight deform type encountered")]
+    InvalidWeightDeformType,
+}
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub struct Vertices {
@@ -31,11 +41,10 @@ impl Vertices {
         let size = i32::from_le_bytes(size);
 
         if size.is_negative() {
-            // TODO(mate): better error
-            Err(PmxError::InvalidEncoding)?
+            Err(Error::NegativeSize)?
         }
 
-        let size = size as _;
+        let size = size as usize;
 
         let mut inner_vec = Vec::with_capacity(size);
 
@@ -63,37 +72,43 @@ pub struct Vertex {
 
 impl Vertex {
     pub fn parse(reader: &mut impl Read, extra_vec4_count: u8, index_size: u8) -> Result<Self> {
-        let mut pos = [0; std::mem::size_of::<Vec3>()];
+        let mut pos_bytes = [0; std::mem::size_of::<Vec3>()];
 
-        reader.read_exact(&mut pos)?;
+        reader.read_exact(&mut pos_bytes)?;
 
-        let chunks = pos.as_chunks::<4>().0;
+        let chunks = pos_bytes.as_chunks::<4>().0;
 
-        let pos: Vec3 = [
+        let pos_floats = [
             f32::from_le_bytes(chunks[0]),
             f32::from_le_bytes(chunks[1]),
             f32::from_le_bytes(chunks[2]),
         ];
 
-        let mut normal = [0; std::mem::size_of::<Vec3>()];
+        let pos = pos_floats.into();
 
-        reader.read_exact(&mut normal)?;
+        let mut normal_bytes = [0; std::mem::size_of::<Vec3>()];
 
-        let chunks = normal.as_chunks::<4>().0;
+        reader.read_exact(&mut normal_bytes)?;
 
-        let normal: Vec3 = [
+        let chunks = normal_bytes.as_chunks::<4>().0;
+
+        let normal_floats = [
             f32::from_le_bytes(chunks[0]),
             f32::from_le_bytes(chunks[1]),
             f32::from_le_bytes(chunks[2]),
         ];
 
-        let mut uv = [0; std::mem::size_of::<Vec2>()];
+        let normal = normal_floats.into();
 
-        reader.read_exact(&mut uv)?;
+        let mut uv_bytes = [0; std::mem::size_of::<Vec2>()];
 
-        let chunks = uv.as_chunks::<4>().0;
+        reader.read_exact(&mut uv_bytes)?;
 
-        let uv: Vec2 = [f32::from_le_bytes(chunks[0]), f32::from_le_bytes(chunks[1])];
+        let chunks = uv_bytes.as_chunks::<4>().0;
+
+        let uv_floats = [f32::from_le_bytes(chunks[0]), f32::from_le_bytes(chunks[1])];
+
+        let uv = uv_floats.into();
 
         let mut vec4s = if extra_vec4_count != 0 {
             Some(vec![Vec4::default(); extra_vec4_count as _])
@@ -137,7 +152,7 @@ impl Vertex {
             4 => unimplemented!("QDEF is currently unsupported"),
             _ => {
                 dbg!("Invalid weight deform type", weight_deform_type[0]);
-                Err(PmxError::InvalidEncoding)?
+                Err(Error::InvalidWeightDeformType)?
             }
         };
 
@@ -160,6 +175,7 @@ impl Vertex {
     }
 }
 
+// TODO(mate): move to types.rs once i figure out a good way to handle this one
 #[derive(Debug, Copy, Clone)]
 pub enum IndexSize {
     Size1([u8; 1]),
@@ -178,12 +194,6 @@ impl TryFrom<u8> for IndexSize {
             _ => Err(Error::IndexSizeMismatch),
         }
     }
-}
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("The index size mismatched")]
-    IndexSizeMismatch,
 }
 
 #[derive(Debug, Copy, Clone)]
