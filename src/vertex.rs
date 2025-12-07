@@ -2,7 +2,7 @@ use std::{io::Read, vec};
 
 use thiserror::Error;
 
-use crate::types::{Vec2, Vec3, Vec4};
+use crate::types::{Index, IndexSize, Vec2, Vec3, Vec4};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -14,6 +14,8 @@ pub enum Error {
     NegativeSize,
     #[error("Invalid weight deform type encountered")]
     InvalidWeightDeformType,
+    #[error(transparent)]
+    TypeError(#[from] crate::types::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -26,7 +28,9 @@ pub struct Vertices {
 
 impl Vertices {
     pub fn len(&self) -> usize {
-        self.size
+        let len = self.inner.len();
+        debug_assert!(self.size == len);
+        len
     }
 
     pub fn vertices(&self) -> &[Vertex] {
@@ -136,27 +140,7 @@ impl Vertex {
 
         let size: IndexSize = index_size.try_into()?;
 
-        let mut weight_deform = match weight_deform_type[0] {
-            0 => WeightDeform::BDEF1 {
-                index: BoneIndex::new(size),
-            },
-            1 => WeightDeform::BDEF2 {
-                indices: [BoneIndex::new(size); 2],
-                weights: [0.0; 2],
-            },
-            2 => WeightDeform::BDEF4 {
-                indices: [BoneIndex::new(size); 4],
-                weights: [0.0; 4],
-            },
-            3 => unimplemented!("SDEF4 is currently unsupported"),
-            4 => unimplemented!("QDEF is currently unsupported"),
-            _ => {
-                dbg!("Invalid weight deform type", weight_deform_type[0]);
-                Err(Error::InvalidWeightDeformType)?
-            }
-        };
-
-        weight_deform.parse(reader)?;
+        let weight_deform = WeightDeform::parse(reader, weight_deform_type[0], size, true)?;
 
         let mut edge_scale = [0; 4];
 
@@ -175,87 +159,63 @@ impl Vertex {
     }
 }
 
-// TODO(mate): move to types.rs once i figure out a good way to handle this one
-#[derive(Debug, Copy, Clone)]
-pub enum IndexSize {
-    Size1([u8; 1]),
-    Size2([u8; 2]),
-    Size4([u8; 4]),
-}
-
-impl TryFrom<u8> for IndexSize {
-    type Error = Error;
-
-    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
-        match value {
-            1 => Ok(Self::Size1([0; 1])),
-            2 => Ok(Self::Size2([0; 2])),
-            4 => Ok(Self::Size4([0; 4])),
-            _ => Err(Error::IndexSizeMismatch),
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct BoneIndex {
-    size: IndexSize,
-}
-
-impl BoneIndex {
-    pub fn new(size: IndexSize) -> Self {
-        Self { size }
-    }
-
-    pub fn fill(&mut self, reader: &mut impl Read) -> Result<()> {
-        match &mut self.size {
-            IndexSize::Size1(raw) => reader.read_exact(raw)?,
-            IndexSize::Size2(raw) => reader.read_exact(raw)?,
-            IndexSize::Size4(raw) => reader.read_exact(raw)?,
-        }
-        Ok(())
-    }
-
-    // TODO(mate): probably move this to a field
-    pub fn value(&self) -> i32 {
-        match &self.size {
-            IndexSize::Size1(raw) => i8::from_le_bytes(*raw) as i32,
-            IndexSize::Size2(raw) => i16::from_le_bytes(*raw) as i32,
-            IndexSize::Size4(raw) => i32::from_le_bytes(*raw),
-        }
-    }
-
-    pub fn is_nil(&self) -> bool {
-        self.value() == -1
-    }
-}
-
 #[derive(Debug)]
 pub enum WeightDeform {
+    // ver 2.0
     BDEF1 {
-        index: BoneIndex,
+        index: Index,
     },
+    // ver 2.0
     BDEF2 {
-        indices: [BoneIndex; 2],
+        indices: [Index; 2],
+        // Only 1 actual weight is stored in the file, the other is calculated from it
         weights: [f32; 2],
     },
+    // ver 2.0
     BDEF4 {
-        indices: [BoneIndex; 4],
+        indices: [Index; 4],
         weights: [f32; 4],
     },
-    // TODO(mate)
-    // SDEF
-    // QDEF
+    /// Spherical deform blending
+    // ver 2.0
+    SDEF {
+        indices: [Index; 2],
+        // Only 1 actual weight is stored in the file, the other is calculated from it
+        weights: [f32; 2],
+        // these fields are unsure?
+        c: Vec3,
+        r0: Vec3,
+        r1: Vec3,
+    },
+    /// Dual quaternion deform blending
+    // unsure if this is correct also
+    // ver 2.1
+    QDEF {
+        indices: [Index; 4],
+        weights: [f32; 4],
+    },
 }
 
 impl WeightDeform {
-    pub fn parse(&mut self, reader: &mut impl Read) -> Result<()> {
-        match self {
-            WeightDeform::BDEF1 { index } => {
-                index.fill(reader)?;
+    pub fn parse(
+        reader: &mut impl Read,
+        typ: u8,
+        size: IndexSize,
+        index_sign: bool,
+    ) -> Result<Self> {
+        match typ {
+            0 => {
+                let index = Index::parse(reader, size, index_sign)?;
+
+                Ok(WeightDeform::BDEF1 { index })
             }
-            WeightDeform::BDEF2 { indices, weights } => {
-                indices[0].fill(reader)?;
-                indices[1].fill(reader)?;
+            1 => {
+                let indices = [
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                ];
+
+                let mut weights = [0.0; 2];
 
                 // We only need to read 4 bytes here, because the 2nd weight is not in the file
                 // but calculated from the first weight
@@ -266,12 +226,18 @@ impl WeightDeform {
 
                 weights[0] = f32::from_le_bytes(chunks[0]);
                 weights[1] = 1.0 - weights[0];
+
+                Ok(WeightDeform::BDEF2 { indices, weights })
             }
-            WeightDeform::BDEF4 { indices, weights } => {
-                indices[0].fill(reader)?;
-                indices[1].fill(reader)?;
-                indices[2].fill(reader)?;
-                indices[3].fill(reader)?;
+            2 => {
+                let indices = [
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                ];
+
+                let mut weights = [0.0; 4];
 
                 let mut weights_bytes = [0; std::mem::size_of::<[f32; 4]>()];
                 reader.read_exact(&mut weights_bytes)?;
@@ -282,8 +248,84 @@ impl WeightDeform {
                 weights[1] = f32::from_le_bytes(chunks[1]);
                 weights[2] = f32::from_le_bytes(chunks[2]);
                 weights[3] = f32::from_le_bytes(chunks[3]);
+
+                Ok(WeightDeform::BDEF4 { indices, weights })
             }
+            3 => {
+                let indices = [
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                ];
+
+                let mut weights = [0.0; 2];
+                // We only need to read 4 bytes here, because the 2nd weight is not in the file
+                // but calculated from the first weight
+                let mut weights_bytes = [0; std::mem::size_of::<f32>()];
+                reader.read_exact(&mut weights_bytes)?;
+
+                let chunks = weights_bytes.as_chunks::<4>().0;
+
+                weights[0] = f32::from_le_bytes(chunks[0]);
+                weights[1] = 1.0 - weights[0];
+
+                let mut c = Vec3::default();
+                let mut r0 = Vec3::default();
+                let mut r1 = Vec3::default();
+
+                for i in 0..3 {
+                    let mut vec_bytes = [0; std::mem::size_of::<Vec3>()];
+
+                    reader.read_exact(&mut vec_bytes)?;
+
+                    let chunks = vec_bytes.as_chunks::<4>().0;
+
+                    let vec_floats = [
+                        f32::from_le_bytes(chunks[0]),
+                        f32::from_le_bytes(chunks[1]),
+                        f32::from_le_bytes(chunks[2]),
+                    ];
+
+                    let vec: Vec3 = vec_floats.into();
+
+                    match i {
+                        0 => c = vec,
+                        1 => r0 = vec,
+                        2 => r1 = vec,
+                        _ => unreachable!(),
+                    }
+                }
+
+                Ok(WeightDeform::SDEF {
+                    indices,
+                    weights,
+                    c,
+                    r0,
+                    r1,
+                })
+            }
+            4 => {
+                let indices = [
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                    Index::parse(reader, size, index_sign)?,
+                ];
+
+                let mut weights = [0.0; 4];
+
+                let mut weights_bytes = [0; std::mem::size_of::<[f32; 4]>()];
+                reader.read_exact(&mut weights_bytes)?;
+
+                let chunks = weights_bytes.as_chunks::<4>().0;
+
+                weights[0] = f32::from_le_bytes(chunks[0]);
+                weights[1] = f32::from_le_bytes(chunks[1]);
+                weights[2] = f32::from_le_bytes(chunks[2]);
+                weights[3] = f32::from_le_bytes(chunks[3]);
+
+                Ok(WeightDeform::QDEF { indices, weights })
+            }
+            _ => Err(Error::InvalidWeightDeformType)?,
         }
-        Ok(())
     }
 }

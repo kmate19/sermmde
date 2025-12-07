@@ -27,12 +27,15 @@ pub enum Error {
     InvalidTextEncoding,
     #[error(transparent)]
     FromUtf8(#[from] std::str::Utf8Error),
+    #[error("Index size mismatch")]
+    IndexSizeMismatch,
 }
 
 type Result<T> = std::result::Result<T, Error>;
 
 /// A bitflag structure used in various parts of the PMX format.
 /// 8 flags per byte. 0 = off, 1 = on.
+// TODO(mate): consider using bitflags crate
 pub struct Flag {
     raw: u8,
 }
@@ -87,6 +90,7 @@ impl TryFrom<u8> for TextEncoding {
 pub struct PmxText {
     // TODO(mate): keep the rawy bytes for now, but maybe we can drop them later
     raw_bytes: Vec<u8>,
+    // TODO(mate): this is also sort of useless as its in the file header and always the same for every text anyways
     encoding: TextEncoding,
     decoded: String,
 }
@@ -148,7 +152,67 @@ impl PmxText {
     }
 }
 
-// TODO(mate): handle the index type currently inside vertex.rs
+#[derive(Debug, Copy, Clone)]
+pub enum IndexSize {
+    Size1([u8; 1]),
+    Size2([u8; 2]),
+    Size4([u8; 4]),
+}
+
+impl TryFrom<u8> for IndexSize {
+    type Error = Error;
+
+    fn try_from(value: u8) -> std::result::Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Size1([0; 1])),
+            2 => Ok(Self::Size2([0; 2])),
+            4 => Ok(Self::Size4([0; 4])),
+            _ => Err(Error::IndexSizeMismatch),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Index {
+    size: IndexSize,
+    sign: bool,
+    value: i32,
+}
+
+impl Index {
+    pub fn parse(reader: &mut impl Read, mut size: IndexSize, sign: bool) -> Result<Self> {
+        // read data into the index
+        match &mut size {
+            IndexSize::Size1(raw) => reader.read_exact(raw)?,
+            IndexSize::Size2(raw) => reader.read_exact(raw)?,
+            IndexSize::Size4(raw) => reader.read_exact(raw)?,
+        };
+
+        let value = match &size {
+            IndexSize::Size1(raw) => {
+                if sign {
+                    i8::from_le_bytes(*raw) as i32
+                } else {
+                    u8::from_le_bytes(*raw) as i32
+                }
+            }
+            IndexSize::Size2(raw) => {
+                if sign {
+                    i16::from_le_bytes(*raw) as i32
+                } else {
+                    u16::from_le_bytes(*raw) as i32
+                }
+            }
+            IndexSize::Size4(raw) => i32::from_le_bytes(*raw),
+        };
+
+        Ok(Self { size, value, sign })
+    }
+
+    pub fn is_nil(&self) -> bool {
+        self.value == -1
+    }
+}
 
 #[cfg(not(feature = "math_glam"))]
 pub type Vec2 = [f32; 2];

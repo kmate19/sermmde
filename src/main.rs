@@ -9,5 +9,5 @@ fn main() {
 
     let pmx = Pmx::open(&path).unwrap();
 
-    dbg!(pmx);
+    dbg!(&pmx);
 }

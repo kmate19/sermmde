@@ -2,7 +2,7 @@ use std::io::Read;
 
 use thiserror::Error;
 
-use crate::types::Index;
+use crate::types::{Index, PmxText, TextEncoding};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -17,19 +17,19 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-pub struct Surfaces {
+pub struct Textures {
     len: usize,
-    inner: Vec<Surface>,
+    inner: Vec<Texture>,
 }
 
-impl Surfaces {
+impl Textures {
     pub fn len(&self) -> usize {
         let len = self.inner.len();
         debug_assert!(self.len == len);
         len
     }
 
-    pub fn parse(reader: &mut impl Read, index_size: u8) -> Result<Self> {
+    pub fn parse(reader: &mut impl Read, encoding: TextEncoding) -> Result<Self> {
         let mut size_bytes = [0; 4];
 
         reader.read_exact(&mut size_bytes)?;
@@ -45,8 +45,8 @@ impl Surfaces {
         let mut inner_vec = Vec::with_capacity(size);
 
         for _ in 0..size {
-            let surf = Surface::parse(reader, index_size)?;
-            inner_vec.push(surf);
+            let tex = Texture::parse(reader, encoding)?;
+            inner_vec.push(tex);
         }
 
         Ok(Self {
@@ -57,14 +57,14 @@ impl Surfaces {
 }
 
 #[derive(Debug)]
-pub struct Surface {
-    index: Index,
+pub struct Texture {
+    path: PmxText,
 }
 
-impl Surface {
-    pub fn parse(reader: &mut impl Read, index_size: u8) -> Result<Self> {
-        let index = Index::parse(reader, index_size.try_into()?, false)?;
+impl Texture {
+    pub fn parse(reader: &mut impl Read, encoding: TextEncoding) -> Result<Self> {
+        let path = PmxText::from_bytes(reader, encoding)?;
 
-        Ok(Self { index })
+        Ok(Self { path })
     }
 }

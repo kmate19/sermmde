@@ -8,6 +8,7 @@ use std::{
 use thiserror::Error;
 
 use crate::{
+    surface, texture,
     types::{self, PmxText, TextEncoding},
     vertex,
 };
@@ -24,6 +25,10 @@ pub enum Error {
     TypeError(#[from] types::Error),
     #[error("Invalid global variable amount, must be at least 8")]
     InvalidGlobalCount,
+    #[error("Surface error: {0}")]
+    SurfaceError(#[from] surface::Error),
+    #[error("Texture error: {0}")]
+    TextureError(#[from] texture::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -31,6 +36,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Pmx {
     header: Header,
     vertices: vertex::Vertices,
+    surfaces: surface::Surfaces,
+    textures: texture::Textures,
 }
 
 impl fmt::Debug for Pmx {
@@ -44,6 +51,11 @@ impl fmt::Debug for Pmx {
                     self.vertices.len()
                 ),
             )
+            .field("surfaces", &format!(
+                "<truncated, print the field separately if you want to see raw contents> (size: {})",
+                self.surfaces.len()
+            ))
+            .field("textures", &self.textures)
             .finish()
     }
 }
@@ -62,7 +74,16 @@ impl Pmx {
             header.globals.bone_idx_size,
         )?;
 
-        Ok(Pmx { header, vertices })
+        let surfaces = surface::Surfaces::parse(&mut reader, header.globals.vert_idx_size)?;
+
+        let textures = texture::Textures::parse(&mut reader, header.globals.encoding)?;
+
+        Ok(Pmx {
+            header,
+            vertices,
+            surfaces,
+            textures,
+        })
     }
 }
 
