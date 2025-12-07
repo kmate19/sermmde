@@ -1,10 +1,13 @@
 use core::fmt;
+
 use std::{
     io::{BufReader, Read},
     path::Path,
 };
 
 use thiserror::Error;
+
+use crate::vertex;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -18,13 +21,30 @@ pub enum Error {
     Utf16Error,
     #[error("Failed to decode utf16 char")]
     DecodeUtf16(#[from] std::char::DecodeUtf16Error),
+    #[error("Error parsing vertex {0}")]
+    VertexError(#[from] vertex::Error),
 }
 
-type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug)]
 pub struct Pmx {
     header: Header,
+    vertices: vertex::Vertices,
+}
+
+impl fmt::Debug for Pmx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Pmx")
+            .field("header", &self.header)
+            .field(
+                "vertices",
+                &format!(
+                    "<truncated, print the field separately if you want to see> (size: {})",
+                    self.vertices.len()
+                ),
+            )
+            .finish()
+    }
 }
 
 impl Pmx {
@@ -35,7 +55,13 @@ impl Pmx {
 
         let header = Header::parse(&mut reader)?;
 
-        Ok(Pmx { header })
+        let vertices = vertex::Vertices::parse(
+            &mut reader,
+            header.globals.vec4_additional,
+            header.globals.bone_idx_size,
+        )?;
+
+        Ok(Pmx { header, vertices })
     }
 }
 
