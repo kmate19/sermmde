@@ -2,16 +2,16 @@ use std::io::Read;
 
 use thiserror::Error;
 
-use crate::types::{Index, PmxText, TextEncoding};
+use crate::types::{PmxText, TextEncoding};
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Negative size encountered where positive expected")]
     NegativeSize,
     #[error(transparent)]
-    TypeError(#[from] crate::types::Error),
+    Type(#[from] crate::types::Error),
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;

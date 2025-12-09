@@ -36,6 +36,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// A bitflag structure used in various parts of the PMX format.
 /// 8 flags per byte. 0 = off, 1 = on.
 // TODO(mate): consider using bitflags crate
+#[derive(Debug)]
 pub struct Flag {
     raw: u8,
 }
@@ -62,6 +63,12 @@ impl Flag {
         }
 
         Some((self.raw & (1 << bit)) != 0)
+    }
+
+    pub fn parse(reader: &mut impl Read) -> Result<Self> {
+        let mut bytes = [0; 1];
+        reader.read_exact(&mut bytes)?;
+        Ok(Self { raw: bytes[0] })
     }
 }
 
@@ -223,3 +230,20 @@ pub type Vec4 = [f32; 4];
 
 #[cfg(feature = "math_glam")]
 pub use glam::{Vec2, Vec3, Vec4};
+
+macro_rules! vec_from_bytes {
+    ($t:ty,$reader:ident) => {{
+        const SIZE: usize = std::mem::size_of::<$t>();
+        const COUNT: usize = SIZE / 4;
+        let mut bytes = [0; SIZE];
+
+        $reader.read_exact(&mut bytes)?;
+
+        let chunks = bytes.as_chunks::<4>().0;
+
+        let floats: [f32; COUNT] = std::array::from_fn(|i| f32::from_le_bytes(chunks[i]));
+
+        floats.into()
+    }};
+}
+pub(super) use vec_from_bytes;

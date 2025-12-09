@@ -1,8 +1,8 @@
-use std::{io::Read, vec};
+use std::io::Read;
 
 use thiserror::Error;
 
-use crate::types::{Index, IndexSize, Vec2, Vec3, Vec4};
+use crate::types::{Index, IndexSize, Vec2, Vec3, Vec4, vec_from_bytes};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -15,7 +15,7 @@ pub enum Error {
     #[error("Invalid weight deform type encountered")]
     InvalidWeightDeformType,
     #[error(transparent)]
-    TypeError(#[from] crate::types::Error),
+    Type(#[from] crate::types::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -76,63 +76,21 @@ pub struct Vertex {
 
 impl Vertex {
     pub fn parse(reader: &mut impl Read, extra_vec4_count: u8, index_size: u8) -> Result<Self> {
-        let mut pos_bytes = [0; std::mem::size_of::<Vec3>()];
+        let pos = vec_from_bytes!(Vec3, reader);
 
-        reader.read_exact(&mut pos_bytes)?;
+        let normal = vec_from_bytes!(Vec3, reader);
 
-        let chunks = pos_bytes.as_chunks::<4>().0;
+        let uv = vec_from_bytes!(Vec2, reader);
 
-        let pos_floats = [
-            f32::from_le_bytes(chunks[0]),
-            f32::from_le_bytes(chunks[1]),
-            f32::from_le_bytes(chunks[2]),
-        ];
-
-        let pos = pos_floats.into();
-
-        let mut normal_bytes = [0; std::mem::size_of::<Vec3>()];
-
-        reader.read_exact(&mut normal_bytes)?;
-
-        let chunks = normal_bytes.as_chunks::<4>().0;
-
-        let normal_floats = [
-            f32::from_le_bytes(chunks[0]),
-            f32::from_le_bytes(chunks[1]),
-            f32::from_le_bytes(chunks[2]),
-        ];
-
-        let normal = normal_floats.into();
-
-        let mut uv_bytes = [0; std::mem::size_of::<Vec2>()];
-
-        reader.read_exact(&mut uv_bytes)?;
-
-        let chunks = uv_bytes.as_chunks::<4>().0;
-
-        let uv_floats = [f32::from_le_bytes(chunks[0]), f32::from_le_bytes(chunks[1])];
-
-        let uv = uv_floats.into();
-
-        let mut vec4s = if extra_vec4_count != 0 {
-            Some(vec![Vec4::default(); extra_vec4_count as _])
+        let vec4s = if extra_vec4_count != 0 {
+            let mut v = Vec::with_capacity(extra_vec4_count as _);
+            for _ in 0..extra_vec4_count {
+                v.push(vec_from_bytes!(Vec4, reader));
+            }
+            Some(v)
         } else {
             None
         };
-
-        if vec4s.is_some() {
-            for vec in vec4s.as_mut().unwrap() {
-                let mut vec_bytes = [0; std::mem::size_of::<Vec4>()];
-                reader.read_exact(&mut vec_bytes)?;
-
-                let chunks = vec_bytes.as_chunks::<4>().0;
-
-                vec[0] = f32::from_le_bytes(chunks[0]);
-                vec[1] = f32::from_le_bytes(chunks[1]);
-                vec[2] = f32::from_le_bytes(chunks[2]);
-                vec[3] = f32::from_le_bytes(chunks[3]);
-            }
-        }
 
         let mut weight_deform_type = [0; 1];
 
@@ -162,23 +120,23 @@ impl Vertex {
 #[derive(Debug)]
 pub enum WeightDeform {
     // ver 2.0
-    BDEF1 {
+    Bdef1 {
         index: Index,
     },
     // ver 2.0
-    BDEF2 {
+    Bdef2 {
         indices: [Index; 2],
         // Only 1 actual weight is stored in the file, the other is calculated from it
         weights: [f32; 2],
     },
     // ver 2.0
-    BDEF4 {
+    Bdef4 {
         indices: [Index; 4],
         weights: [f32; 4],
     },
     /// Spherical deform blending
     // ver 2.0
-    SDEF {
+    Sdef {
         indices: [Index; 2],
         // Only 1 actual weight is stored in the file, the other is calculated from it
         weights: [f32; 2],
@@ -190,7 +148,7 @@ pub enum WeightDeform {
     /// Dual quaternion deform blending
     // unsure if this is correct also
     // ver 2.1
-    QDEF {
+    Qdef {
         indices: [Index; 4],
         weights: [f32; 4],
     },
@@ -207,7 +165,7 @@ impl WeightDeform {
             0 => {
                 let index = Index::parse(reader, size, index_sign)?;
 
-                Ok(WeightDeform::BDEF1 { index })
+                Ok(WeightDeform::Bdef1 { index })
             }
             1 => {
                 let indices = [
@@ -227,7 +185,7 @@ impl WeightDeform {
                 weights[0] = f32::from_le_bytes(chunks[0]);
                 weights[1] = 1.0 - weights[0];
 
-                Ok(WeightDeform::BDEF2 { indices, weights })
+                Ok(WeightDeform::Bdef2 { indices, weights })
             }
             2 => {
                 let indices = [
@@ -249,7 +207,7 @@ impl WeightDeform {
                 weights[2] = f32::from_le_bytes(chunks[2]);
                 weights[3] = f32::from_le_bytes(chunks[3]);
 
-                Ok(WeightDeform::BDEF4 { indices, weights })
+                Ok(WeightDeform::Bdef4 { indices, weights })
             }
             3 => {
                 let indices = [
@@ -273,19 +231,7 @@ impl WeightDeform {
                 let mut r1 = Vec3::default();
 
                 for i in 0..3 {
-                    let mut vec_bytes = [0; std::mem::size_of::<Vec3>()];
-
-                    reader.read_exact(&mut vec_bytes)?;
-
-                    let chunks = vec_bytes.as_chunks::<4>().0;
-
-                    let vec_floats = [
-                        f32::from_le_bytes(chunks[0]),
-                        f32::from_le_bytes(chunks[1]),
-                        f32::from_le_bytes(chunks[2]),
-                    ];
-
-                    let vec: Vec3 = vec_floats.into();
+                    let vec: Vec3 = vec_from_bytes!(Vec3, reader);
 
                     match i {
                         0 => c = vec,
@@ -295,7 +241,7 @@ impl WeightDeform {
                     }
                 }
 
-                Ok(WeightDeform::SDEF {
+                Ok(WeightDeform::Sdef {
                     indices,
                     weights,
                     c,
@@ -323,7 +269,7 @@ impl WeightDeform {
                 weights[2] = f32::from_le_bytes(chunks[2]);
                 weights[3] = f32::from_le_bytes(chunks[3]);
 
-                Ok(WeightDeform::QDEF { indices, weights })
+                Ok(WeightDeform::Qdef { indices, weights })
             }
             _ => Err(Error::InvalidWeightDeformType)?,
         }

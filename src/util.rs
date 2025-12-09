@@ -3,11 +3,11 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Invalid UTF-16LE encoding")]
-    Utf16LeError,
+    Utf16Le,
     #[error("Invalid UTF-16 encoding {0}")]
-    FromUtf16Error(#[from] std::string::FromUtf16Error),
+    FromUtf16(#[from] std::string::FromUtf16Error),
     #[error("Failed to decode UTF-16 character {0}")]
-    DecodeUtf16Error(#[from] std::char::DecodeUtf16Error),
+    DecodeUtf16(#[from] std::char::DecodeUtf16Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -20,7 +20,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub(crate) fn from_utf16le(v: &[u8]) -> Result<String> {
     // This means that the slice length must be even
     let (chunks, []) = v.as_chunks::<2>() else {
-        return Err(Error::Utf16LeError);
+        return Err(Error::Utf16Le);
     };
 
     let res = match (cfg!(target_endian = "little"), unsafe {

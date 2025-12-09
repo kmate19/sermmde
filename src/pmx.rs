@@ -18,17 +18,17 @@ pub enum Error {
     #[error("File had an invalid tag, did you input the correct file?")]
     InvalidTag,
     #[error("IO error: {0}")]
-    IO(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("Error parsing vertex: {0}")]
     VertexError(#[from] vertex::Error),
-    #[error("PMX type error: {0}")]
-    TypeError(#[from] types::Error),
     #[error("Invalid global variable amount, must be at least 8")]
     InvalidGlobalCount,
+    #[error("PMX type error: {0}")]
+    Type(#[from] types::Error),
     #[error("Surface error: {0}")]
-    SurfaceError(#[from] surface::Error),
+    Surface(#[from] surface::Error),
     #[error("Texture error: {0}")]
-    TextureError(#[from] texture::Error),
+    Texture(#[from] texture::Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

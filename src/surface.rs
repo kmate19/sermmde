@@ -9,9 +9,9 @@ pub enum Error {
     #[error("Negative size encountered where positive expected")]
     NegativeSize,
     #[error(transparent)]
-    TypeError(#[from] crate::types::Error),
+    Type(#[from] crate::types::Error),
     #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 }
 
 type Result<T> = std::result::Result<T, Error>;

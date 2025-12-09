@@ -1,3 +1,4 @@
+mod material;
 pub mod pmx;
 mod surface;
 mod texture;
